@@ -14,22 +14,27 @@
   command: firewall-cmd --permanent --get-zones
   register: fw_zone_list
   changed_when: false
+  check_mode: no
 
 - name: Get the default zone
   command: firewall-cmd --get-default-zone
   register: fw_zone_default
   changed_when: false
+  check_mode: no
 
 - name: Create zones
-  command: 'firewall-cmd --permanent --new-zone={{ item.zone }}'
-  when: item.zone not in fw_zone_list.stdout.split()
-  with_items: "{{ fw_zones }}"
+  command: 'firewall-cmd --permanent --new-zone={{ item.key }}'
+  when: item.key not in fw_zone_list.stdout.split()
+  with_dict: "{{ fw_zones }}"
   notify: reload firewalld
 
 - name: Set zone targets
-  command: 'firewall-cmd --permanent --zone={{ item.zone }} --set-target={{ item.target | default("default") }}'
-  when: item.zone not in fw_zone_list.stdout.split()
-  with_items: "{{ fw_zones }}"
+  firewalld:
+    zone: "{{ item.key }}"
+    target: "{{ item.value.target|default('default') }}"
+    state: present
+    permanent: yes
+  with_dict: "{{ fw_zones }}"
   notify: reload firewalld
 
 - name: Set the default zone
@@ -37,34 +42,159 @@
   when: fw_default_zone != fw_zone_default.stdout
   notify: reload firewalld
 
-- name: Enable services
-  firewalld:
-    zone: "{{ item.0.zone }}"
-    service: "{{ item.1 }}"
-    state: enabled
-    permanent: true
-  with_subelements:
-    - "{{ fw_zones | selectattr('services', 'defined') | list }}"
-    - services
+- name: Create custom services
+  template:
+    src: "service.xml.j2"
+    dest: "/etc/firewalld/services/{{ item.name }}.xml"
+  with_items: "{{ fw_custom_services }}"
+  when: fw_custom_services is defined
   notify: reload firewalld
+
+- name: Reload firewalld to pickup changes
+  meta: flush_handlers
+
+
+- name: Get the services in each zone
+  shell: 'firewall-cmd --permanent --zone={{ item }} --list-services | sed -e "s/ /\n/g"'
+  register: fw_zone_service_list
+  changed_when: false
+  check_mode: no
+  with_items: "{{ fw_zone_list.stdout.split() }}"
+
+- name: Remove services from zones
+  firewalld:
+    zone: "{{ item.0.item }}"
+    service: "{{ item.1 }}"
+    state: disabled
+    permanent: yes
+    immediate: yes
+  when:
+    - item.0.item in fw_zones
+    - item.1 not in fw_zones[item.0.item]|json_query('services[].name')|default([])
+  with_subelements:
+    - "{{ fw_zone_service_list.results }}"
+    - stdout_lines
+
+
+- name: Get the interfaces in each zone
+  shell: 'firewall-cmd --permanent --zone={{ item }} --list-interfaces | sed -e "s/ /\n/g"'
+  register: fw_zone_interface_list
+  changed_when: false
+  check_mode: no
+  with_items: "{{ fw_zone_list.stdout.split() }}"
+
+- name: Remove interfaces from zones
+  firewalld:
+    zone: "{{ item.0.item }}"
+    interface: "{{ item.1 }}"
+    state: disabled
+    permanent: yes
+    immediate: yes
+  when:
+    - item.0.item in fw_zones
+    - item.1 not in fw_zones[item.0.item]|json_query('interfaces[].name')|default([])
+  with_subelements:
+    - "{{ fw_zone_interface_list.results }}"
+    - stdout_lines
+
+
+- name: Get the sources in each zone
+  shell: 'firewall-cmd --permanent --zone={{ item }} --list-sources | sed -e "s/ /\n/g"'
+  register: fw_zone_source_list
+  changed_when: false
+  check_mode: no
+  with_items: "{{ fw_zone_list.stdout.split() }}"
+
+- name: Remove sources from zones
+  firewalld:
+    zone: "{{ item.0.item }}"
+    source: "{{ item.1 }}"
+    state: disabled
+    permanent: yes
+    immediate: yes
+  when:
+    - item.0.item in fw_zones
+    - item.1 not in fw_zones[item.0.item]|json_query('sources[].src')|default([])
+  with_subelements:
+    - "{{ fw_zone_source_list.results }}"
+    - stdout_lines
+
+
+- name: Get the rich rules in each zone
+  shell: 'firewall-cmd --permanent --zone={{ item }} --list-rich-rules'
+  register: fw_zone_rich_rules_list
+  changed_when: false
+  check_mode: no
+  with_items: "{{ fw_zone_list.stdout.split() }}"
+
+- name: Remove rich rules from zones
+  firewalld:
+    zone: "{{ item.0.item }}"
+    rich_rule: "{{ item.1 }}"
+    state: disabled
+    permanent: yes
+    immediate: yes
+  when:
+    - item.0.item in fw_zones
+    - item.1 not in fw_zones[item.0.item]|json_query('rich_rules[].rule')|default([])
+  with_subelements:
+    - "{{ fw_zone_rich_rules_list.results }}"
+    - stdout_lines
+
 
 - name: Enable NATing
   firewalld:
-    zone: "{{ item.zone }}"
-    masquerade: "{{ item.masquerade }}"
+    zone: "{{ item.key }}"
+    masquerade: "{{ item.value.masquerade }}"
     state: enabled
     permanent: true
-  when: item.masquerade is defined
-  with_items: "{{ fw_zones }}"
-  notify: reload firewalld
+  when: item.value.masquerade is defined
+  with_dict: "{{ fw_zones }}"
 
-- name: Add network interfaces to their zones
+- name: Add services to zones
   firewalld:
-    zone: "{{ item.0.zone }}"
-    interface: "{{ item.1 }}"
-    state: enabled
-    permanent: true
+    zone: "{{ item.0.key }}"
+    service: "{{ item.1.name }}"
+    state: "{{ item.1.state|default('enabled') }}"
+    permanent: "{{ item.1.permanent|default('true') }}"
+    immediate: "{{ item.1.immediate|default('true') }}"
   with_subelements:
-    - "{{ fw_zones | selectattr('interfaces', 'defined') | list }}"
-    - interfaces
-  notify: reload firewalld
+    - "{{ fw_zones | dict2items }}"
+    - value.services
+    - skip_missing: True
+
+- name: Add network interfaces to zones
+  firewalld:
+    zone: "{{ item.0.key }}"
+    interface: "{{ item.1.name }}"
+    state: "{{ item.1.state|default('enabled') }}"
+    permanent: "{{ item.1.permanent|default('true') }}"
+    immediate: "{{ item.1.immediate|default('true') }}"
+  with_subelements:
+    - "{{ fw_zones | dict2items }}"
+    - value.interfaces
+    - skip_missing: True
+
+- name: Add network sources to zones
+  firewalld:
+    zone: "{{ item.0.key }}"
+    source: "{{ item.1.src }}"
+    state: "{{ item.1.state|default('enabled') }}"
+    permanent: "{{ item.1.permanent|default('true') }}"
+    immediate: "{{ item.1.immediate|default('true') }}"
+  with_subelements:
+    - "{{ fw_zones | dict2items }}"
+    - value.sources
+    - skip_missing: True
+
+- name: Add rich rules to zones
+  firewalld:
+    zone: "{{ item.0.key }}"
+    rich_rule: "{{ item.1.rule }}"
+    state: "{{ item.1.state|default('enabled') }}"
+    permanent: "{{ item.1.permanent|default('true') }}"
+    immediate: "{{ item.1.immediate|default('true') }}"
+  with_subelements:
+    - "{{ fw_zones | dict2items }}"
+    - value.rich_rules
+    - skip_missing: True

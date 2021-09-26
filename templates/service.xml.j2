@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>{% if item.short is defined %}{{ item.short }}{% else %}{{ item.name }}{% endif %}</short>
+  <description>{{ item.description }}</description>
+{% if item.ports is defined %}
+{% for p in item.ports %}
+  <port protocol="{{ p.protocol }}" port="{{ p.port }}"/>
+{% endfor %}
+{% endif %}
+{% if item.protocols is defined %}
+{% for p in item.protocols %}
+  <protocol value="{{ p.value }}"/>
+{% endfor %}
+{% endif %}
+{% if item.destinations is defined %}
+{% for d in item.destinations %}
+  <destination
+{%- if d.ipv4 is defined %}
+ ipv4="{{ d.ipv4 }}"
+{%- endif -%}
+{%- if d.ipv6 is defined %}
+ ipv6="{{ d.ipv6 }}"
+{%- endif -%}
+/>
+{% endfor %}
+{% endif %}
+{% if item.source_ports is defined %}
+{% for p in item.source_ports %}
+  <source-port protocol="{{ p.protocol }}" port="{{ p.port }}"/>
+{% endfor %}
+{% endif %}
+{% if item.modules is defined %}
+{% for m in item.modules %}
+  <module name="{{ p.name }}"/>
+{% endfor %}
+{% endif %}
+</service>
