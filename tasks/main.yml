@@ -10,21 +10,32 @@
     state: started
     enabled: yes
 
+- name: Get log denied
+  command: firewall-cmd --get-log-denied
+  register: fw_get_log_denied
+  changed_when: false
+  check_mode: no
+
+- name: Set log denied
+  command: "firewall-cmd --set-log-denied={{ fw_log_denied }}"
+  when: fw_log_denied != fw_get_log_denied.stdout
+  notify: reload firewalld
+
 - name: Get the current zones
   command: firewall-cmd --permanent --get-zones
-  register: fw_zone_list
+  register: fw_get_zone_list
   changed_when: false
   check_mode: no
 
 - name: Get the default zone
   command: firewall-cmd --get-default-zone
-  register: fw_zone_default
+  register: fw_get_default_zone
   changed_when: false
   check_mode: no
 
 - name: Create zones
   command: 'firewall-cmd --permanent --new-zone={{ item.key }}'
-  when: item.key not in fw_zone_list.stdout.split()
+  when: item.key not in fw_get_zone_list.stdout.split()
   with_dict: "{{ fw_zones }}"
   notify: reload firewalld
 
@@ -39,7 +50,7 @@
 
 - name: Set the default zone
   command: "firewall-cmd --set-default-zone={{ fw_default_zone }}"
-  when: fw_default_zone != fw_zone_default.stdout
+  when: fw_default_zone != fw_get_default_zone.stdout
   notify: reload firewalld
 
 - name: Create custom services
@@ -56,10 +67,10 @@
 
 - name: Get the services in each zone
   shell: 'firewall-cmd --permanent --zone={{ item }} --list-services | sed -e "s/ /\n/g"'
-  register: fw_zone_service_list
+  register: fw_get_zone_services
   changed_when: false
   check_mode: no
-  with_items: "{{ fw_zone_list.stdout.split() }}"
+  with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove services from zones
   firewalld:
@@ -72,16 +83,16 @@
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('services[].name')|default([])
   with_subelements:
-    - "{{ fw_zone_service_list.results }}"
+    - "{{ fw_get_zone_services.results }}"
     - stdout_lines
 
 
 - name: Get the interfaces in each zone
   shell: 'firewall-cmd --permanent --zone={{ item }} --list-interfaces | sed -e "s/ /\n/g"'
-  register: fw_zone_interface_list
+  register: fw_get_zone_interfaces
   changed_when: false
   check_mode: no
-  with_items: "{{ fw_zone_list.stdout.split() }}"
+  with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove interfaces from zones
   firewalld:
@@ -94,16 +105,16 @@
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('interfaces[].name')|default([])
   with_subelements:
-    - "{{ fw_zone_interface_list.results }}"
+    - "{{ fw_get_zone_interfaces.results }}"
     - stdout_lines
 
 
 - name: Get the sources in each zone
   shell: 'firewall-cmd --permanent --zone={{ item }} --list-sources | sed -e "s/ /\n/g"'
-  register: fw_zone_source_list
+  register: fw_get_zone_sources
   changed_when: false
   check_mode: no
-  with_items: "{{ fw_zone_list.stdout.split() }}"
+  with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove sources from zones
   firewalld:
@@ -116,16 +127,16 @@
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('sources[].src')|default([])
   with_subelements:
-    - "{{ fw_zone_source_list.results }}"
+    - "{{ fw_get_zone_sources.results }}"
     - stdout_lines
 
 
 - name: Get the rich rules in each zone
   shell: 'firewall-cmd --permanent --zone={{ item }} --list-rich-rules'
-  register: fw_zone_rich_rules_list
+  register: fw_get_zone_rich_rules
   changed_when: false
   check_mode: no
-  with_items: "{{ fw_zone_list.stdout.split() }}"
+  with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove rich rules from zones
   firewalld:
@@ -138,7 +149,29 @@
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('rich_rules[].rule')|default([])
   with_subelements:
-    - "{{ fw_zone_rich_rules_list.results }}"
+    - "{{ fw_get_zone_rich_rules.results }}"
+    - stdout_lines
+
+
+- name: Get the ICMP blocks in each zone
+  shell: 'firewall-cmd --permanent --zone={{ item }} --list-icmp-blocks | sed -e "s/ /\n/g"'
+  register: fw_get_zone_icmp_blocks
+  changed_when: false
+  check_mode: no
+  with_items: "{{ fw_get_zone_list.stdout.split() }}"
+
+- name: Remove ICMP blocks from zones
+  firewalld:
+    zone: "{{ item.0.item }}"
+    icmp_block: "{{ item.1 }}"
+    state: disabled
+    permanent: yes
+    immediate: yes
+  when:
+    - item.0.item in fw_zones
+    - item.1 not in fw_zones[item.0.item]|json_query('icmp_blocks[].name')|default([])
+  with_subelements:
+    - "{{ fw_get_zone_icmp_blocks.results }}"
     - stdout_lines
 
 
@@ -146,9 +179,20 @@
   firewalld:
     zone: "{{ item.key }}"
     masquerade: "{{ item.value.masquerade }}"
-    state: enabled
+    state: "{% if item.value.masquerade %}enabled{% else %}disabled{% endif %}"
     permanent: true
+    immediate: "{{ item.value.immediate|default('true') }}"
   when: item.value.masquerade is defined
+  with_dict: "{{ fw_zones }}"
+
+- name: Set ICMP block inversion
+  firewalld:
+    zone: "{{ item.key }}"
+    icmp_block_inversion: "{{ item.value.icmp_block_inversion }}"
+    state: "{% if item.value.icmp_block_inversion %}enabled{% else %}disabled{% endif %}"
+    permanent: true
+    immediate: "{{ item.value.immediate|default('true') }}"
+  when: item.value.icmp_block_inversion is defined
   with_dict: "{{ fw_zones }}"
 
 - name: Add services to zones
@@ -197,4 +241,16 @@
   with_subelements:
     - "{{ fw_zones | dict2items }}"
     - value.rich_rules
+    - skip_missing: True
+
+- name: Add ICMP block rules to zones
+  firewalld:
+    zone: "{{ item.0.key }}"
+    icmp_block: "{{ item.1.name }}"
+    state: "{{ item.1.state|default('enabled') }}"
+    permanent: "{{ item.1.permanent|default('true') }}"
+    immediate: "{{ item.1.immediate|default('true') }}"
+  with_subelements:
+    - "{{ fw_zones | dict2items }}"
+    - value.icmp_blocks
     - skip_missing: True

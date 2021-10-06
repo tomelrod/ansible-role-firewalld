@@ -1,7 +1,9 @@
 ---
 fw_zones:
-  - zone: public
+  public:
     services:
-      - ssh
+      - name: ssh
 
 fw_default_zone: public
+
+fw_log_denied: "all"
