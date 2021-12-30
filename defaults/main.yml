@@ -7,3 +7,5 @@ fw_zones:
 fw_default_zone: public
 
 fw_log_denied: "all"
+
+fw_remove_undefined: yes

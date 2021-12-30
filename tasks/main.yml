@@ -70,6 +70,8 @@
   register: fw_get_zone_services
   changed_when: false
   check_mode: no
+  when:
+    - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove services from zones
@@ -82,6 +84,7 @@
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('services[].name')|default([])
+    - fw_remove_undefined
   with_subelements:
     - "{{ fw_get_zone_services.results }}"
     - stdout_lines
@@ -92,6 +95,8 @@
   register: fw_get_zone_interfaces
   changed_when: false
   check_mode: no
+  when:
+    - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove interfaces from zones
@@ -104,6 +109,7 @@
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('interfaces[].name')|default([])
+    - fw_remove_undefined
   with_subelements:
     - "{{ fw_get_zone_interfaces.results }}"
     - stdout_lines
@@ -114,6 +120,8 @@
   register: fw_get_zone_sources
   changed_when: false
   check_mode: no
+  when:
+    - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove sources from zones
@@ -126,6 +134,7 @@
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('sources[].src')|default([])
+    - fw_remove_undefined
   with_subelements:
     - "{{ fw_get_zone_sources.results }}"
     - stdout_lines
@@ -136,6 +145,8 @@
   register: fw_get_zone_rich_rules
   changed_when: false
   check_mode: no
+  when:
+    - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove rich rules from zones
@@ -148,6 +159,7 @@
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('rich_rules[].rule')|default([])
+    - fw_remove_undefined
   with_subelements:
     - "{{ fw_get_zone_rich_rules.results }}"
     - stdout_lines
@@ -158,6 +170,8 @@
   register: fw_get_zone_icmp_blocks
   changed_when: false
   check_mode: no
+  when:
+    - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove ICMP blocks from zones
@@ -170,8 +184,38 @@
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('icmp_blocks[].name')|default([])
+    - fw_remove_undefined
   with_subelements:
     - "{{ fw_get_zone_icmp_blocks.results }}"
+    - stdout_lines
+
+
+- name: Get the forwarded ports in each zone
+  shell: 'firewall-cmd --permanent --zone={{ item }} --list-forward-ports | sed -e "s/ /\n/g"'
+  register: fw_get_zone_port_forwards
+  changed_when: false
+  check_mode: no
+  when:
+    - fw_remove_undefined
+  with_items: "{{ fw_get_zone_list.stdout.split() }}"
+
+- name: Remove forwarded ports from zones
+  firewalld:
+    zone: "{{ item.0.item }}"
+    port_forward:
+      - port: "{{ item.1.port }}"
+        proto: "{{ item.1.proto }}"
+        toaddr: "{{ item.1.to_addr|default(omit) }}"
+        toport: "{{ item.1.to_port }}"
+    state: disabled
+    permanent: yes
+    immediate: yes
+  when:
+    - item.0.item in fw_zones
+    - item.1 not in fw_zones[item.0.item]|json_query('icmp_blocks[].name')|default([])
+    - fw_remove_undefined
+  with_subelements:
+    - "{{ fw_get_zone_port_forwards.results }}"
     - stdout_lines
 
 
@@ -253,4 +297,20 @@
   with_subelements:
     - "{{ fw_zones | dict2items }}"
     - value.icmp_blocks
+    - skip_missing: True
+
+- name: Add port forwarding rules to zones
+  firewalld:
+    zone: "{{ item.0.key }}"
+    port_forward:
+      - port: "{{ item.1.port }}"
+        proto: "{{ item.1.proto }}"
+        toaddr: "{{ item.1.to_addr }}"
+        toport: "{{ item.1.to_port }}"
+    state: "{{ item.1.state|default('enabled') }}"
+    permanent: "{{ item.1.permanent|default('true') }}"
+    immediate: "{{ item.1.immediate|default('true') }}"
+  with_subelements:
+    - "{{ fw_zones | dict2items }}"
+    - value.port_forwards
     - skip_missing: True
