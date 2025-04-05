@@ -1,86 +1,89 @@
 ---
 - name: Install firewalld
-  package:
+  ansible.builtin.package:
     name: firewalld
     state: present
 
 - name: Start and enable firewalld
-  service:
+  ansible.builtin.service:
     name: firewalld
     state: started
-    enabled: yes
+    enabled: true
 
 - name: Get log denied
-  command: firewall-cmd --get-log-denied
+  ansible.builtin.command: firewall-cmd --get-log-denied
   register: fw_get_log_denied
   changed_when: false
-  check_mode: no
+  check_mode: false
 
 - name: Set log denied
-  command: "firewall-cmd --set-log-denied={{ fw_log_denied }}"
+  ansible.builtin.command: "firewall-cmd --set-log-denied={{ fw_log_denied }}"
   when: fw_log_denied != fw_get_log_denied.stdout
-  notify: reload firewalld
+  notify: Reload firewalld
 
 - name: Get the current zones
-  command: firewall-cmd --permanent --get-zones
+  ansible.builtin.command: firewall-cmd --permanent --get-zones
   register: fw_get_zone_list
   changed_when: false
-  check_mode: no
+  check_mode: false
 
 - name: Get the default zone
-  command: firewall-cmd --get-default-zone
+  ansible.builtin.command: firewall-cmd --get-default-zone
   register: fw_get_default_zone
   changed_when: false
-  check_mode: no
+  check_mode: false
 
 - name: Create zones
-  command: 'firewall-cmd --permanent --new-zone={{ item.key }}'
+  ansible.builtin.command: 'firewall-cmd --permanent --new-zone={{ item.key }}'
   when: item.key not in fw_get_zone_list.stdout.split()
   with_dict: "{{ fw_zones }}"
-  notify: reload firewalld
+  notify: Reload firewalld
 
 - name: Set zone targets
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.key }}"
     target: "{{ item.value.target|default('default') }}"
     state: present
-    permanent: yes
+    permanent: true
   with_dict: "{{ fw_zones }}"
-  notify: reload firewalld
+  notify: Reload firewalld
 
 - name: Set the default zone
-  command: "firewall-cmd --set-default-zone={{ fw_default_zone }}"
+  ansible.builtin.command: "firewall-cmd --set-default-zone={{ fw_default_zone }}"
   when: fw_default_zone != fw_get_default_zone.stdout
-  notify: reload firewalld
+  notify: Reload firewalld
 
 - name: Create custom services
-  template:
+  ansible.builtin.template:
     src: "service.xml.j2"
     dest: "/etc/firewalld/services/{{ item.name }}.xml"
+    owner: root
+    group: root
+    mode: "u=rw,g=r,o=r"
   with_items: "{{ fw_custom_services }}"
   when: fw_custom_services is defined
-  notify: reload firewalld
+  notify: Reload firewalld
 
 - name: Reload firewalld to pickup changes
-  meta: flush_handlers
+  ansible.builtin.meta: flush_handlers
 
 
 - name: Get the services in each zone
-  shell: 'firewall-cmd --permanent --zone={{ item }} --list-services | sed -e "s/ /\n/g"'
+  ansible.builtin.shell: 'firewall-cmd --permanent --zone={{ item }} --list-services | sed -e "s/ /\n/g"'
   register: fw_get_zone_services
   changed_when: false
-  check_mode: no
+  check_mode: false
   when:
     - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove services from zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.item }}"
     service: "{{ item.1 }}"
     state: disabled
-    permanent: yes
-    immediate: yes
+    permanent: true
+    immediate: true
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('services[].name')|default([])
@@ -91,21 +94,21 @@
 
 
 - name: Get the interfaces in each zone
-  shell: 'firewall-cmd --permanent --zone={{ item }} --list-interfaces | sed -e "s/ /\n/g"'
+  ansible.builtin.shell: 'firewall-cmd --permanent --zone={{ item }} --list-interfaces | sed -e "s/ /\n/g"'
   register: fw_get_zone_interfaces
   changed_when: false
-  check_mode: no
+  check_mode: false
   when:
     - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove interfaces from zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.item }}"
     interface: "{{ item.1 }}"
     state: disabled
-    permanent: yes
-    immediate: yes
+    permanent: true
+    immediate: true
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('interfaces[].name')|default([])
@@ -116,21 +119,21 @@
 
 
 - name: Get the sources in each zone
-  shell: 'firewall-cmd --permanent --zone={{ item }} --list-sources | sed -e "s/ /\n/g"'
+  ansible.builtin.shell: 'firewall-cmd --permanent --zone={{ item }} --list-sources | sed -e "s/ /\n/g"'
   register: fw_get_zone_sources
   changed_when: false
-  check_mode: no
+  check_mode: false
   when:
     - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove sources from zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.item }}"
     source: "{{ item.1 }}"
     state: disabled
-    permanent: yes
-    immediate: yes
+    permanent: true
+    immediate: true
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('sources[].src')|default([])
@@ -141,21 +144,21 @@
 
 
 - name: Get the rich rules in each zone
-  shell: 'firewall-cmd --permanent --zone={{ item }} --list-rich-rules'
+  ansible.builtin.shell: 'firewall-cmd --permanent --zone={{ item }} --list-rich-rules'
   register: fw_get_zone_rich_rules
   changed_when: false
-  check_mode: no
+  check_mode: false
   when:
     - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove rich rules from zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.item }}"
     rich_rule: "{{ item.1 }}"
     state: disabled
-    permanent: yes
-    immediate: yes
+    permanent: true
+    immediate: true
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('rich_rules[].rule')|default([])
@@ -166,21 +169,21 @@
 
 
 - name: Get the ICMP blocks in each zone
-  shell: 'firewall-cmd --permanent --zone={{ item }} --list-icmp-blocks | sed -e "s/ /\n/g"'
+  ansible.builtin.shell: 'firewall-cmd --permanent --zone={{ item }} --list-icmp-blocks | sed -e "s/ /\n/g"'
   register: fw_get_zone_icmp_blocks
   changed_when: false
-  check_mode: no
+  check_mode: false
   when:
     - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove ICMP blocks from zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.item }}"
     icmp_block: "{{ item.1 }}"
     state: disabled
-    permanent: yes
-    immediate: yes
+    permanent: true
+    immediate: true
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('icmp_blocks[].name')|default([])
@@ -191,16 +194,16 @@
 
 
 - name: Get the forwarded ports in each zone
-  shell: 'firewall-cmd --permanent --zone={{ item }} --list-forward-ports | sed -e "s/ /\n/g"'
+  ansible.builtin.shell: 'firewall-cmd --permanent --zone={{ item }} --list-forward-ports | sed -e "s/ /\n/g"'
   register: fw_get_zone_port_forwards
   changed_when: false
-  check_mode: no
+  check_mode: false
   when:
     - fw_remove_undefined
   with_items: "{{ fw_get_zone_list.stdout.split() }}"
 
 - name: Remove forwarded ports from zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.item }}"
     port_forward:
       - port: "{{ item.1.port }}"
@@ -208,8 +211,8 @@
         toaddr: "{{ item.1.to_addr|default(omit) }}"
         toport: "{{ item.1.to_port }}"
     state: disabled
-    permanent: yes
-    immediate: yes
+    permanent: true
+    immediate: true
   when:
     - item.0.item in fw_zones
     - item.1 not in fw_zones[item.0.item]|json_query('icmp_blocks[].name')|default([])
@@ -220,7 +223,7 @@
 
 
 - name: Enable NATing
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.key }}"
     masquerade: "{{ item.value.masquerade }}"
     state: "{% if item.value.masquerade %}enabled{% else %}disabled{% endif %}"
@@ -230,7 +233,7 @@
   with_dict: "{{ fw_zones }}"
 
 - name: Set ICMP block inversion
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.key }}"
     icmp_block_inversion: "{{ item.value.icmp_block_inversion }}"
     state: "{% if item.value.icmp_block_inversion %}enabled{% else %}disabled{% endif %}"
@@ -240,7 +243,7 @@
   with_dict: "{{ fw_zones }}"
 
 - name: Add services to zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.key }}"
     service: "{{ item.1.name }}"
     state: "{{ item.1.state|default('enabled') }}"
@@ -249,10 +252,10 @@
   with_subelements:
     - "{{ fw_zones | dict2items }}"
     - value.services
-    - skip_missing: True
+    - skip_missing: true
 
 - name: Add network interfaces to zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.key }}"
     interface: "{{ item.1.name }}"
     state: "{{ item.1.state|default('enabled') }}"
@@ -261,10 +264,10 @@
   with_subelements:
     - "{{ fw_zones | dict2items }}"
     - value.interfaces
-    - skip_missing: True
+    - skip_missing: true
 
 - name: Add network sources to zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.key }}"
     source: "{{ item.1.src }}"
     state: "{{ item.1.state|default('enabled') }}"
@@ -273,10 +276,10 @@
   with_subelements:
     - "{{ fw_zones | dict2items }}"
     - value.sources
-    - skip_missing: True
+    - skip_missing: true
 
 - name: Add rich rules to zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.key }}"
     rich_rule: "{{ item.1.rule }}"
     state: "{{ item.1.state|default('enabled') }}"
@@ -285,10 +288,10 @@
   with_subelements:
     - "{{ fw_zones | dict2items }}"
     - value.rich_rules
-    - skip_missing: True
+    - skip_missing: true
 
 - name: Add ICMP block rules to zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.key }}"
     icmp_block: "{{ item.1.name }}"
     state: "{{ item.1.state|default('enabled') }}"
@@ -297,10 +300,10 @@
   with_subelements:
     - "{{ fw_zones | dict2items }}"
     - value.icmp_blocks
-    - skip_missing: True
+    - skip_missing: true
 
 - name: Add port forwarding rules to zones
-  firewalld:
+  ansible.posix.firewalld:
     zone: "{{ item.0.key }}"
     port_forward:
       - port: "{{ item.1.port }}"
@@ -313,4 +316,4 @@
   with_subelements:
     - "{{ fw_zones | dict2items }}"
     - value.port_forwards
-    - skip_missing: True
+    - skip_missing: true
